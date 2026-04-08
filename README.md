@@ -1,151 +1,114 @@
----
+# 🏥 CRA Site Visit Scheduler
 
-# CRA Site Visit Scheduler Environment
+An OpenEnv RL environment for scheduling Clinical Research Associate (CRA) visits to clinical trial sites — a real operations research problem from the pharmaceutical industry.
 
-An OpenEnv reinforcement learning environment where an AI agent learns to optimally schedule Clinical Research Associate (CRA) visits to clinical trial sites.
+**Live:** [HF Space](https://huggingface.co/spaces/JitendraSinghSankhwar/cra-visit-scheduler) · **Docs:** [API Playground](https://JitendraSinghSankhwar-cra-visit-scheduler.hf.space/docs)
 
-## Motivation
+## The Problem
 
-In clinical trials, CRAs monitor trial sites through periodic visits. Each visit has a time window — a date range within which it must occur. CRAs manage multiple sites across different cities. Planning manually is slow and suboptimal, leading to unnecessary travel costs and missed visit windows.
+CRAs monitor clinical trial sites through periodic visits. Each site has a **time window** — a date range within which the visit must happen. CRAs are based in different cities, and travel between sites costs time and money.
 
-This environment models the **Multi-Vehicle Routing Problem with Time Windows (VRPTW)** — a real operations research problem used in the pharmaceutical industry.
+The agent must:
+1. **Assign** sites to CRAs (who covers what)
+2. **Route** visits to minimize total travel cost
+3. **Meet deadlines** — visit each site within its time window
+
+This is the [Vehicle Routing Problem with Time Windows (VRPTW)](https://en.wikipedia.org/wiki/Vehicle_routing_problem) — an NP-hard optimization problem used daily in pharma logistics.
 
 ## Tasks
 
-| Task | CRAs | Sites | Windows | Description |
-|------|------|-------|---------|-------------|
-| `easy` | 1 | 4 | 15-25 days | 1 CRA, 4 nearby Northeast sites, wide windows. Any reasonable route works. |
-| `medium` | 3 | 15 | 4-14 days | 3 CRAs across East/Midwest, mixed windows. Smart CRA assignment required. |
-| `hard` | 10 | 50 | 3-8 days | 10 CRAs nationwide, tight windows with site priorities. Not all sites reachable. |
+| Task | CRAs | Sites | Window Width | What Makes It Hard |
+|------|------|-------|-------------|--------------------|
+| `easy` | 1 | 4 | 15–25 days | Just find a good route order |
+| `medium` | 3 | 15 | 4–14 days | Must assign sites to the right CRA |
+| `hard` | 10 | 50 | 3–8 days | Not all sites reachable; must prioritize |
 
-The hard task includes **site priority levels** (critical/high/normal) — critical sites give 3x reward, missed critical sites give 3x penalty.
+## How It Works
 
-## Action Space
+Each step, the agent picks one `(cra_id, site_index)` pair:
 
 ```python
-CRAAction(cra_id=0, site_index=1)  # Send CRA 0 to unvisited site at index 1
+CRAAction(cra_id=0, site_index=2)  # Send CRA 0 to the 3rd unvisited site
 ```
 
-| Field | Type | Description |
-|-------|------|-------------|
-| `cra_id` | int | Which CRA to send (0-indexed) |
-| `site_index` | int | Which unvisited site to visit (0-indexed into unvisited list) |
+The environment returns an observation with CRA positions, unvisited sites with distances and time windows, visited sites, and total cost. Rewards are given per step:
 
-## Observation Space
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `current_day` | int | Current day in the planning period |
-| `cras` | list[dict] | CRA states: id, home_city, current_city, current_day |
-| `unvisited_sites` | list[dict] | Sites not yet visited: name, window_start, window_end, distances, travel_days, priority |
-| `visited_sites` | list[dict] | Sites already visited: name, visited_by_cra, visited_on_day, cost, travel_days, status |
-| `total_cost` | float | Total travel cost so far (miles) |
-| `sites_missed` | int | Number of sites whose windows have closed |
-| `task_id` | str | Current task ID |
-| `done` | bool | Whether episode is finished |
-| `reward` | float | Reward for last action |
-
-## Reward Design
-
-| Event | Reward | Notes |
-|-------|--------|-------|
-| Visit within window | +2.0 × priority | critical=3x, high=2x, normal=1x |
-| Visit but waited (early arrival) | +1.0 × priority | Arrived before window opened |
-| Missed window | -3.0 × priority | Window closed before visit |
-| Travel cost per step | -(distance / max_distance) | Normalized penalty |
-| All sites completed | +5.0 | Bonus for full completion |
-| Episode impossible | -5.0 | No remaining sites reachable |
+| Event | Reward |
+|-------|--------|
+| Visit within window | +2.0 × priority |
+| Early arrival (waited) | +1.0 × priority |
+| Missed window | −3.0 × priority |
+| Travel cost | −(distance / max_distance) |
+| All sites done | +5.0 bonus |
 
 ## Grading
 
-Each task scored 0.0 to 1.0:
 ```
-completion = sites_visited / total_sites
-efficiency = min(1.0, optimal_cost / agent_cost)
-score = completion × 0.5 + efficiency × 0.5
+score = 0.5 × (sites_visited / total_sites) + 0.5 × min(1, optimal_cost / agent_cost)
 ```
 
-OR-Tools computes the optimal solution as benchmark (server-side only).
+Optimal cost is computed server-side using [OR-Tools](https://developers.google.com/optimization).
 
-## Baseline Scores
-
-Greedy nearest-neighbor baseline:
-
-| Task | Score | Visited | Cost (mi) |
-|------|-------|---------|-----------|
-| easy | 1.0000 | 4/4 | 279 |
-| medium | 0.7954 | 11/15 | 6,699 |
-| hard | 0.7900 | 29/50 | 15,273 |
-
-## Setup
-
-```bash
-# Run server locally
-uvicorn server.app:app --host 0.0.0.0 --port 8000
-
-# Run baseline
-export OPENAI_API_KEY=your_key
-python baseline.py
-```
-
-## Docker
-
-```bash
-docker build -t cra-scheduler-env:latest -f server/Dockerfile .
-docker run -p 8000:8000 cra-scheduler-env:latest
-```
-
-## Usage (WebSocket — recommended)
+## Quick Start
 
 ```python
-import asyncio, json
-from websockets.asyncio.client import connect
+import asyncio
+from cra_scheduler_env import CRAAction, CRASchedulerEnv
 
-async def play():
-    async with connect("wss://JitendraSinghSankhwar-cra-scheduler-env.hf.space/ws") as ws:
-        await ws.send(json.dumps({"type": "reset", "data": {"task_id": "easy"}}))
-        r = json.loads(await ws.recv())
-        obs = r["data"]["observation"]
-
-        while not r["data"].get("done", False):
-            sites = obs["unvisited_sites"]
-            if not sites:
+async def main():
+    async with CRASchedulerEnv(base_url="https://JitendraSinghSankhwar-cra-visit-scheduler.hf.space") as env:
+        result = await env.reset(task_id="easy")
+        while not result.done:
+            obs = result.observation
+            if not obs.unvisited_sites:
                 break
-            await ws.send(json.dumps({"type": "step", "data": {"cra_id": 0, "site_index": 0}}))
-            r = json.loads(await ws.recv())
-            obs = r["data"]["observation"]
+            result = await env.step(CRAAction(cra_id=0, site_index=0))
+        print(f"Cost: {result.observation.total_cost} miles")
 
-asyncio.run(play())
+asyncio.run(main())
 ```
 
-## Usage (HTTP Session)
+## Run Locally
 
 ```bash
-# Start session
-curl -X POST /session/reset -d '{"task_id":"easy"}'
-# Returns session_id
+# Docker
+docker build -t cra-scheduler-env .
+docker run -p 8000:8000 cra-scheduler-env
 
-# Take steps
-curl -X POST /session/step -d '{"session_id":"<id>","cra_id":0,"site_index":0}'
+# Or directly
+uvicorn server.app:app --host 0.0.0.0 --port 8000
 ```
 
-## Endpoints
+## Project Structure
 
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/health` | GET | Health check |
-| `/tasks` | GET | List all 3 tasks with action schema |
-| `/schema` | GET | Action/observation/state JSON schemas |
-| `/baseline` | POST | Run greedy baseline, return scores |
-| `/grader` | GET | Compute grader score from metrics |
-| `/reset` | POST | Reset environment (stateless) |
-| `/step` | POST | Execute action (stateless) |
-| `/state` | GET | Current state |
-| `/ws` | WS | WebSocket for stateful sessions |
-| `/session/reset` | POST | Start stateful HTTP session |
-| `/session/step` | POST | Step in HTTP session |
-| `/session/state` | GET | Get HTTP session state |
+```
+├── models.py              # Action, Observation, State (Pydantic)
+├── tasks.py               # 3 task definitions (easy/medium/hard)
+├── distances.py           # 100 US cities with haversine distances
+├── grader.py              # Scoring: completion + efficiency
+├── client.py              # WebSocket client (EnvClient subclass)
+├── inference.py           # LLM baseline using OpenAI API
+├── server/
+│   ├── environment.py     # Core step/reset/state logic
+│   ├── solver.py          # OR-Tools optimal benchmark
+│   └── app.py             # FastAPI + custom endpoints
+├── Dockerfile
+├── openenv.yaml
+└── pyproject.toml
+```
+
+## API Endpoints
+
+| Endpoint | Description |
+|----------|-------------|
+| `GET /health` | Health check |
+| `GET /tasks` | List tasks with action schema |
+| `POST /baseline` | Run greedy baseline, return scores |
+| `GET /grader` | Compute score from metrics |
+| `WS /ws` | WebSocket for stateful sessions |
+| `POST /session/reset` | Start HTTP session |
+| `POST /session/step` | Step in HTTP session |
 
 ## Author
 
-Jitendra Singh Sankhwar — OpenEnv Hackathon 2026
+Jitendra Singh Sankhwar — [OpenEnv Hackathon 2026](https://meta-pytorch.org/OpenEnv/)

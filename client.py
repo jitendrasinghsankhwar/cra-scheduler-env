@@ -1,4 +1,13 @@
-"""CRA Scheduler Environment Client."""
+"""CRA Scheduler Environment Client.
+
+WebSocket client for interacting with the CRA Scheduler server.
+Extends OpenEnv's EnvClient with typed action/observation parsing.
+
+Usage:
+    async with CRASchedulerEnv(base_url="http://localhost:8000") as env:
+        result = await env.reset(task_id="easy")
+        result = await env.step(CRAAction(cra_id=0, site_index=0))
+"""
 
 from __future__ import annotations
 
@@ -14,10 +23,7 @@ class CRASchedulerEnv(EnvClient[CRAAction, CRAObservation, CRAState]):
     """Client for CRA Scheduler Environment."""
 
     def _step_payload(self, action: CRAAction) -> Dict[str, Any]:
-        return {
-            "cra_id": action.cra_id,
-            "site_index": action.site_index,
-        }
+        return {"cra_id": action.cra_id, "site_index": action.site_index}
 
     def _parse_result(self, payload: Dict[str, Any]) -> StepResult[CRAObservation]:
         obs_data = payload.get("observation", {})
@@ -28,9 +34,6 @@ class CRASchedulerEnv(EnvClient[CRAAction, CRAObservation, CRAState]):
             visited_sites=obs_data.get("visited_sites", []),
             total_cost=obs_data.get("total_cost", 0.0),
             task_id=obs_data.get("task_id", "easy"),
-            done=payload.get("done", False),
-            reward=payload.get("reward"),
-            metadata=obs_data.get("metadata", {}),
         )
         return StepResult(
             observation=observation,
