@@ -17,4 +17,5 @@ def grade(sites_visited: int, total_sites: int, agent_cost: float, optimal_cost:
     else:
         efficiency = min(1.0, optimal_cost / agent_cost)
 
-    return round(completion * 0.5 + efficiency * 0.5, 4)
+    raw = round(completion * 0.5 + efficiency * 0.5, 4)
+    return min(max(raw, 0.001), 0.999)
