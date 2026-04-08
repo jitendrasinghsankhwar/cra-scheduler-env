@@ -1,5 +1,6 @@
-"""CRA Scheduler Environment Server."""
+"""CRA Scheduler Environment for OpenEnv."""
 
-from .environment import CRASchedulerEnvironment
+from .client import CRASchedulerEnv
+from .models import CRAAction, CRAObservation, CRAState
 
-__all__ = ["CRASchedulerEnvironment"]
+__all__ = ["CRASchedulerEnv", "CRAAction", "CRAObservation", "CRAState"]
